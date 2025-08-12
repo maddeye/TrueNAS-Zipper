@@ -66,7 +66,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
 - [ ] Folder enumeration and validation
   - [x] List subfolders in snapshot root
   - [x] Filter by `^[A-Z0-9]{4}$`
-  - [ ] Skip symlinks, devices, sockets, fifos
+  - [x] Skip symlinks, devices, sockets, fifos
 - [ ] Change detection (skip unchanged)
   - [x] Prefer `zfs diff <prev>@<curr>` if available/allowed to detect changes
   - [x] Fallback: compute manifest hash (relative path + size + mtime) and compare to stored state
@@ -88,7 +88,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
 - [ ] Notifications (Gotify)
   - [x] Implement client with timeout and error logging
   - [x] Add CLI debug command to send a test message
-  - [ ] Send on failures and optionally on successes (configurable; default failures only)
+  - [x] Send on failures and optionally on successes (configurable; default failures only)
 - [ ] Concurrency
   - [x] Worker pool capped by `max_workers`; default 1
   - [ ] Per-task timeouts to avoid stalls

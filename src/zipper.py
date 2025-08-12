@@ -232,7 +232,7 @@ def main(argv: list[str]) -> int:
             )
             return 0 if ok else 1
 
-        zfs_available = shutil.which("zfs") is not None
+        zfs_available = shutil.which("zfs") is not None and not args.dry_run
         dataset = None
         snapshot_name = None
         prev_snapshot = None
@@ -277,13 +277,22 @@ def main(argv: list[str]) -> int:
             return 1
 
         folders: list[Path] = []
-        for entry in sorted(source_root.iterdir()):
-            if not entry.is_dir():
-                continue
-            name = entry.name
-            if not valid_folder_pattern.match(name):
-                continue
-            folders.append(entry)
+        # Use scandir to avoid following symlinks and to skip special files
+        try:
+            with os.scandir(source_root) as it:
+                for dent in it:
+                    try:
+                        if not dent.is_dir(follow_symlinks=False):
+                            continue
+                    except Exception:
+                        continue
+                    name = dent.name
+                    if not valid_folder_pattern.match(name):
+                        continue
+                    folders.append(Path(dent.path))
+        except FileNotFoundError:
+            log.error("source root not found: %s", source_root)
+            return 1
 
         log.info("found %d candidate folders", len(folders))
 
