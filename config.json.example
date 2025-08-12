@@ -1,0 +1,20 @@
+{
+  "source_path": "/mnt/tank/source_dataset",
+  "target_path": "/mnt/tank/target_dataset",
+  "snapshot_prefix": "auto-zip",
+  "max_workers": 1,
+  "retries": 3,
+  "nice": 10,
+  "umask": "027",
+  "lockfile_path": "/var/run/zipper.lock",
+  "tmp_dir": "/mnt/tank/tmp",
+  "log_file": "/var/log/zipper.log",
+  "gotify": {
+    "url": "https://gotify.example.com/message",
+    "token": "REPLACE_WITH_TOKEN",
+    "priority": 5,
+    "timeout_seconds": 10
+  }
+}
+
+

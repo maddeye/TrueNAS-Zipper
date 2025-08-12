@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+
+# Editors/OS
+.DS_Store
+.idea/
+.vscode/
+
+# Build/dist
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+zipper.log
+
+# Local config
+config.json
+
+# Debug folders
+ABCD/
+NAS_SOURCE/
+NAS_TARGET/
