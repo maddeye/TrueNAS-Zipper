@@ -102,7 +102,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [x] `--dry-run` simulates actions and prints planned changes
   - [x] Preflight checks: free space, tmp/target writability (temp free space)
 - [ ] QA on small test dataset
-  - [ ] Create sample source structure and validate outputs
+  - [x] Create sample source structure and validate outputs (script)
   - [ ] Verify integrity, metadata correctness, and retention
 
 ### Commit guidance

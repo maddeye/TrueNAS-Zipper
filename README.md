@@ -32,6 +32,13 @@ See `config.json.example` for all options. Key fields:
   --send-gotify "hello from zipper" --title "zipper test" --priority 5
 ```
 
+### QA smoke test
+Requires `jq`:
+```bash
+chmod +x scripts/qa_smoke.sh
+./scripts/qa_smoke.sh ./config.json
+```
+
 ### Cron (hourly)
 Use a lock to avoid overlaps:
 ```cron
