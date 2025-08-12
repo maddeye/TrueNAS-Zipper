@@ -27,6 +27,14 @@ zipper.log
 config.json
 
 # Debug folders
-ABCD/
+tmp/
 NAS_SOURCE/
 NAS_TARGET/
+
+# Lock files
+zipper.lock
+zipper.cron.lock
+
+# AI
+todo.md
+notes.md
