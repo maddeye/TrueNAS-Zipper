@@ -115,7 +115,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def setup_logging(log_file: Path, verbosity: int) -> logging.Logger:
     log = logging.getLogger("zipper")
     log.setLevel(logging.DEBUG)
-    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    fmt = logging.Formatter("%(asctime)s %(levelname)s [%(rid)s/%(fid)s] %(message)s")
+
+    class _ContextDefaults(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
+            if not hasattr(record, "rid"):
+                record.rid = "-"
+            if not hasattr(record, "fid"):
+                record.fid = "-"
+            return True
 
     # File handler with fallback if unwritable
     file_handler = None
@@ -138,6 +146,7 @@ def setup_logging(log_file: Path, verbosity: int) -> logging.Logger:
     if file_handler is not None:
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(fmt)
+        file_handler.addFilter(_ContextDefaults())
         log.addHandler(file_handler)
 
     # Syslog handler (FreeBSD: /var/run/log; Linux: /dev/log). Only if root.
@@ -151,7 +160,8 @@ def setup_logging(log_file: Path, verbosity: int) -> logging.Logger:
             if syslog_socket is not None:
                 syslog_handler = logging.handlers.SysLogHandler(address=syslog_socket)
                 syslog_handler.setLevel(logging.INFO)
-                syslog_handler.setFormatter(logging.Formatter("zipper: %(levelname)s %(message)s"))
+                syslog_handler.setFormatter(logging.Formatter("zipper: %(levelname)s [%(rid)s/%(fid)s] %(message)s"))
+                syslog_handler.addFilter(_ContextDefaults())
                 log.addHandler(syslog_handler)
     except Exception:
         # Fall back silently if syslog unavailable
@@ -162,6 +172,7 @@ def setup_logging(log_file: Path, verbosity: int) -> logging.Logger:
         stderr_handler = logging.StreamHandler(sys.stderr)
         stderr_handler.setLevel(logging.DEBUG if verbosity > 1 else logging.INFO)
         stderr_handler.setFormatter(fmt)
+        stderr_handler.addFilter(_ContextDefaults())
         log.addHandler(stderr_handler)
 
     return log
@@ -215,10 +226,9 @@ def main(argv: list[str]) -> int:
         return 2
 
     try:
-        log.info("startup: dry_run=%s workers=%s", args.dry_run, config.max_workers)
-
         run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S") + f"-{os.getpid()}"
         host = socket.gethostname()
+        _log_with_ids(log, run_id, None).info("startup: dry_run=%s workers=%s", args.dry_run, config.max_workers)
 
         # Debug path: send Gotify and exit
         if args.send_gotify is not None:
@@ -254,26 +264,26 @@ def main(argv: list[str]) -> int:
                 log.error("failed to create snapshot for %s", dataset)
                 return 1
             snapshot_path = _snapshot_path(Path(mountpoint), snapshot_name)
-            log.info("snapshot ready: %s at %s", snapshot_name, snapshot_path)
+            _log_with_ids(log, run_id, None).info("snapshot ready: %s at %s", snapshot_name, snapshot_path)
 
             prev_snapshot = _previous_snapshot(dataset, config.snapshot_prefix, snapshot_name, log)
             if prev_snapshot:
-                log.info("previous snapshot: %s", prev_snapshot)
+                _log_with_ids(log, run_id, None).info("previous snapshot: %s", prev_snapshot)
             else:
-                log.info("no previous snapshot; full scan")
+                _log_with_ids(log, run_id, None).info("no previous snapshot; full scan")
 
             if prev_snapshot:
                 changed_paths = _zfs_diff_paths(dataset, prev_snapshot, snapshot_name, log)
-                log.info("zfs diff reports %d changed paths", len(changed_paths))
+                _log_with_ids(log, run_id, None).info("zfs diff reports %d changed paths", len(changed_paths))
 
             source_root = Path(snapshot_path)
         else:
-            log.info("zfs not found; planning without snapshot")
+            _log_with_ids(log, run_id, None).info("zfs not found; planning without snapshot")
             source_root = config.source_path
 
         valid_folder_pattern = re.compile(r"^[A-Z0-9]{4}$")
         if not source_root.is_dir():
-            log.error("snapshot root is not a directory: %s", source_root)
+            _log_with_ids(log, run_id, None).error("snapshot root is not a directory: %s", source_root)
             return 1
 
         folders: list[Path] = []
@@ -294,7 +304,7 @@ def main(argv: list[str]) -> int:
             log.error("source root not found: %s", source_root)
             return 1
 
-        log.info("found %d candidate folders", len(folders))
+        _log_with_ids(log, run_id, None).info("found %d candidate folders", len(folders))
 
         to_process: list[Path] = []
         if prev_snapshot:
@@ -307,7 +317,7 @@ def main(argv: list[str]) -> int:
         else:
             to_process = folders
 
-        log.info("%d folders to process", len(to_process))
+        _log_with_ids(log, run_id, None).info("%d folders to process", len(to_process))
         completed = 0
         skipped = 0
         failed = 0
@@ -902,6 +912,16 @@ def stat_is_regular(mode: int) -> bool:
     import stat as pystat
 
     return pystat.S_ISREG(mode)
+
+
+def _log_with_ids(log: logging.Logger, run_id: str | None, folder_id: str | None) -> logging.LoggerAdapter:
+    # LoggerAdapter injects extra fields for formatting
+    extra = {}
+    if run_id is not None:
+        extra["rid"] = run_id
+    if folder_id is not None:
+        extra["fid"] = folder_id
+    return logging.LoggerAdapter(log, extra)  # type: ignore[arg-type]
 
 
 def _choose_temp_parent(config_tmp: Path, target_dir: Path) -> Path:
