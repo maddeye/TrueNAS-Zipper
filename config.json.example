@@ -2,6 +2,7 @@
   "source_path": "/mnt/tank/source_dataset",
   "target_path": "/mnt/tank/target_dataset",
   "snapshot_prefix": "auto-zip",
+  "snapshot_retention": 10,
   "max_workers": 1,
   "retries": 3,
   "nice": 10,

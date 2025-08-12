@@ -25,6 +25,7 @@ from pathlib import Path
 import hashlib
 from datetime import datetime, timezone
 import socket
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import fcntl  # FreeBSD/Unix locking
@@ -45,6 +46,7 @@ class AppConfig:
     source_path: Path
     target_path: Path
     snapshot_prefix: str
+    snapshot_retention: int
     max_workers: int
     retries: int
     nice: int
@@ -80,6 +82,7 @@ class AppConfig:
             source_path=Path(data["source_path"]).resolve(),
             target_path=Path(data["target_path"]).resolve(),
             snapshot_prefix=str(data["snapshot_prefix"]),
+            snapshot_retention=int(data.get("snapshot_retention", 10)),
             max_workers=int(data["max_workers"]),
             retries=int(data["retries"]),
             nice=int(data["nice"]),
@@ -294,19 +297,43 @@ def main(argv: list[str]) -> int:
             to_process = folders
 
         log.info("%d folders to process", len(to_process))
-        for folder in to_process:
-            success = _process_folder_with_retries(
-                source_folder=folder,
-                snapshot_name=snapshot_name if zfs_available else None,
-                config=config,
-                dry_run=args.dry_run,
-                run_id=run_id,
-                host=host,
-                log=log,
-            )
-            if not success:
-                # Continue to next folder after notification
-                continue
+        if int(config.max_workers) > 1:
+            with ThreadPoolExecutor(max_workers=int(config.max_workers)) as executor:
+                futures = [
+                    executor.submit(
+                        _process_folder_with_retries,
+                        folder,
+                        snapshot_name if zfs_available else None,
+                        config,
+                        args.dry_run,
+                        run_id,
+                        host,
+                        log,
+                    )
+                    for folder in to_process
+                ]
+                for fut in as_completed(futures):
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        log.error("concurrency worker error: %s", e)
+        else:
+            for folder in to_process:
+                success = _process_folder_with_retries(
+                    source_folder=folder,
+                    snapshot_name=snapshot_name if zfs_available else None,
+                    config=config,
+                    dry_run=args.dry_run,
+                    run_id=run_id,
+                    host=host,
+                    log=log,
+                )
+                if not success:
+                    # Continue to next folder after notification
+                    continue
+
+        if zfs_available and snapshot_name is not None:
+            _cleanup_old_snapshots(dataset, config.snapshot_prefix, int(config.snapshot_retention), args.dry_run, log)
         return 0
     finally:
         try:
@@ -406,6 +433,42 @@ def _previous_snapshot(dataset: str, prefix: str, current: str, log: logging.Log
 
 def _snapshot_path(mountpoint: Path, snapshot_name: str) -> Path:
     return mountpoint / ".zfs" / "snapshot" / snapshot_name
+
+
+def _cleanup_old_snapshots(
+    dataset: str,
+    prefix: str,
+    keep: int,
+    dry_run: bool,
+    log: logging.Logger,
+) -> None:
+    code, out, err = _run_cmd(
+        ["zfs", "list", "-t", "snapshot", "-H", "-o", "name", "-s", "creation", "-r", dataset],
+        log,
+    )
+    if code != 0:
+        log.error("zfs list snapshots failed: %s", err.strip())
+        return
+    snaps: list[str] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or "@" not in line:
+            continue
+        ds, sn = line.split("@", 1)
+        if ds != dataset or not sn.startswith(prefix + "-"):
+            continue
+        snaps.append(sn)
+    if len(snaps) <= keep:
+        return
+    to_delete = snaps[0 : max(0, len(snaps) - keep)]
+    for sn in to_delete:
+        full = f"{dataset}@{sn}"
+        if dry_run:
+            log.info("dry-run: would destroy snapshot %s", full)
+        else:
+            code, _, err = _run_cmd(["zfs", "destroy", full], log)
+            if code != 0:
+                log.error("failed to destroy snapshot %s: %s", full, err.strip())
 
 
 def _zfs_diff_paths(dataset: str, prev: str, curr: str, log: logging.Logger) -> set[str]:

@@ -62,7 +62,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
 - [ ] ZFS snapshot handling (TrueNAS CORE / FreeBSD)
   - [x] Create read-only snapshot of source dataset with prefix
   - [x] Derive snapshot mount path via `.zfs/snapshot/<name>`
-  - [ ] Cleanup old snapshots created by this tool (bounded)
+  - [x] Cleanup old snapshots created by this tool (bounded)
 - [ ] Folder enumeration and validation
   - [x] List subfolders in snapshot root
   - [x] Filter by `^[A-Z0-9]{4}$`
@@ -89,7 +89,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [x] Add CLI debug command to send a test message
   - [ ] Send on failures and optionally on successes (configurable; default failures only)
 - [ ] Concurrency
-  - [ ] Worker pool capped by `max_workers`; default 1
+  - [x] Worker pool capped by `max_workers`; default 1
   - [ ] Per-task timeouts to avoid stalls
 - [ ] Logging and observability
   - [ ] Syslog integration (FreeBSD) + rotating file log

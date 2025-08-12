@@ -15,6 +15,7 @@ Hourly job to zip each valid 4-char folder under a source dataset, generate `met
 See `config.json.example` for all options. Key fields:
 - `source_path`, `target_path`
 - `snapshot_prefix`: e.g., `auto-zip`
+- `snapshot_retention`: keep last N snapshots created by the tool
 - `max_workers`: default 1; raise carefully
 - `retries`: default 3
 - `gotify`: `url`, `token`, `priority`
