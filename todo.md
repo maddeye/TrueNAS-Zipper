@@ -80,6 +80,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
 - [ ] Target path organization
   - [x] Ensure subfolder `target_path/<SOURCE>` exists
   - [x] Rotation: keep only 2 archives (scheme A)
+  - [x] Publish with rollback safety (no destructive changes on failure)
   - [ ] Update per-folder state after successful move
 - [ ] Retries and error handling
   - [x] Retry up to 3 times for transient errors with backoff

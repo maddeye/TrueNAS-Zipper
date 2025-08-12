@@ -694,36 +694,81 @@ def _process_folder_once(
     prev_sha256 = target_dir / f"{folder_name}.prev.zip.sha256"
 
     if not dry_run:
-        # Delete old prev
-        for p in (prev_zip, prev_meta, prev_md5, prev_sha256):
+        # Safer publish with rollback:
+        backup_zip = target_dir / f"{zip_name}.bak_current"
+        backup_meta = target_dir / "metadata.json.bak_current"
+        backup_md5 = target_dir / f"{zip_name}.md5.bak_current"
+        backup_sha256 = target_dir / f"{zip_name}.sha256.bak_current"
+
+        made_backup = False
+        try:
+            # Step A: move current -> backup if exists (do not touch existing prev yet)
+            if current_zip.exists():
+                os.replace(current_zip, backup_zip)
+                made_backup = True
+            if current_meta.exists():
+                os.replace(current_meta, backup_meta)
+            if current_md5.exists():
+                os.replace(current_md5, backup_md5)
+            if current_sha256.exists():
+                os.replace(current_sha256, backup_sha256)
+
+            # Step B: publish new -> current
+            os.replace(tmp_zip, current_zip)
+            os.replace(tmp_meta, current_meta)
+            if tmp_md5.exists():
+                os.replace(tmp_md5, current_md5)
+            if tmp_sha256.exists():
+                os.replace(tmp_sha256, current_sha256)
+
+            # Step C: finalize rotation. If we had a backup (there was a current),
+            # update prev to the backup atomically after success.
+            if made_backup:
+                # Remove old prev now that new current is in place
+                for p in (prev_zip, prev_meta, prev_md5, prev_sha256):
+                    try:
+                        if p.exists():
+                            p.unlink()
+                    except Exception:
+                        pass
+                # Rename backups to prev
+                if backup_zip.exists():
+                    os.replace(backup_zip, prev_zip)
+                if backup_meta.exists():
+                    os.replace(backup_meta, prev_meta)
+                if backup_md5.exists():
+                    os.replace(backup_md5, prev_md5)
+                if backup_sha256.exists():
+                    os.replace(backup_sha256, prev_sha256)
+        except Exception:
+            # Rollback: restore backups back to current; leave existing prev untouched
             try:
-                if p.exists():
-                    p.unlink()
+                if backup_zip.exists():
+                    os.replace(backup_zip, current_zip)
+                if backup_meta.exists():
+                    os.replace(backup_meta, current_meta)
+                if backup_md5.exists():
+                    os.replace(backup_md5, current_md5)
+                if backup_sha256.exists():
+                    os.replace(backup_sha256, current_sha256)
             except Exception:
                 pass
-        # Rotate current to prev if exists
-        if current_zip.exists():
-            current_zip.rename(prev_zip)
-        if current_meta.exists():
-            current_meta.rename(prev_meta)
-        if current_md5.exists():
-            current_md5.rename(prev_md5)
-        if current_sha256.exists():
-            current_sha256.rename(prev_sha256)
-
-        # Move new files atomically into place
-        os.replace(tmp_zip, current_zip)
-        os.replace(tmp_meta, current_meta)
-        if tmp_md5.exists():
-            os.replace(tmp_md5, current_md5)
-        if tmp_sha256.exists():
-            os.replace(tmp_sha256, current_sha256)
-
-        # Cleanup temp dir (best-effort)
-        try:
-            tmp_run_dir.rmdir()
-        except Exception:
-            pass
+            # Re-raise to be handled by retry logic
+            raise
+        finally:
+            # Cleanup any leftover backups (should be none if rotation completed)
+            for p in (backup_zip, backup_meta, backup_md5, backup_sha256):
+                try:
+                    if p.exists():
+                        p.unlink()
+                except Exception:
+                    pass
+            # Cleanup temp dir
+            try:
+                import shutil as _shutil
+                _shutil.rmtree(tmp_run_dir, ignore_errors=True)
+            except Exception:
+                pass
 
     log.info("done: %s -> %s", folder_name, target_dir)
 
