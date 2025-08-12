@@ -424,10 +424,6 @@ def _strip_mountpoint(dataset: str, full_path: str, log: logging.Logger) -> str:
     return full_path
 
 
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
-
-
 # -----------------
 # Notifications
 # -----------------
@@ -471,4 +467,8 @@ def _send_gotify(
     except Exception as e:
         log.error("gotify error: %s", e)
         return False
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
 
