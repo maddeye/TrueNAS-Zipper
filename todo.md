@@ -85,7 +85,8 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [ ] Retry up to 3 times for transient errors with backoff
   - [ ] On final failure, send Gotify notification and continue with next folder
 - [ ] Notifications (Gotify)
-  - [ ] Implement client with timeout and error logging
+  - [x] Implement client with timeout and error logging
+  - [x] Add CLI debug command to send a test message
   - [ ] Send on failures and optionally on successes (configurable; default failures only)
 - [ ] Concurrency
   - [ ] Worker pool capped by `max_workers`; default 1

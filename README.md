@@ -24,6 +24,12 @@ See `config.json.example` for all options. Key fields:
 /usr/local/bin/python3 src/zipper.py --config ./config.json --dry-run
 ```
 
+### Debug: send a Gotify message
+```bash
+/usr/local/bin/python3 src/zipper.py --config ./config.json \
+  --send-gotify "hello from zipper" --title "zipper test" --priority 5
+```
+
 ### Cron (hourly)
 Use a lock to avoid overlaps:
 ```cron

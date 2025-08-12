@@ -17,6 +17,9 @@ import re
 import subprocess
 import time
 import shutil
+import urllib.request
+import urllib.error
+import json as jsonlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -95,6 +98,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--config", required=True, help="Path to config.json")
     parser.add_argument("--dry-run", action="store_true", help="Do not modify anything")
     parser.add_argument("--verbose", "-v", action="count", default=0, help="Increase verbosity")
+    parser.add_argument("--send-gotify", metavar="MESSAGE", help="Send a test Gotify message and exit")
+    parser.add_argument("--title", default="zipper debug", help="Title for --send-gotify")
+    parser.add_argument("--priority", type=int, help="Priority override for --send-gotify")
     return parser.parse_args(argv)
 
 
@@ -202,6 +208,18 @@ def main(argv: list[str]) -> int:
 
     try:
         log.info("startup: dry_run=%s workers=%s", args.dry_run, config.max_workers)
+
+        # Debug path: send Gotify and exit
+        if args.send_gotify is not None:
+            prio = args.priority if args.priority is not None else config.gotify.priority
+            ok = _send_gotify(
+                gotify=config.gotify,
+                title=args.title,
+                message=args.send_gotify,
+                priority=prio,
+                log=log,
+            )
+            return 0 if ok else 1
 
         zfs_available = shutil.which("zfs") is not None
         dataset = None
@@ -409,4 +427,48 @@ def _strip_mountpoint(dataset: str, full_path: str, log: logging.Logger) -> str:
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
 
+
+# -----------------
+# Notifications
+# -----------------
+
+def _send_gotify(
+    gotify: GotifyConfig,
+    title: str,
+    message: str,
+    priority: int,
+    log: logging.Logger,
+) -> bool:
+    payload = {
+        "title": title,
+        "message": message,
+        "priority": int(priority),
+    }
+    data = jsonlib.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url=gotify.url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "X-Gotify-Key": gotify.token,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=gotify.timeout_seconds) as resp:
+            code = getattr(resp, "status", None) or resp.getcode()
+            if 200 <= code < 300:
+                log.info("gotify sent: %s (%s)", title, code)
+                return True
+            else:
+                body = resp.read().decode("utf-8", errors="ignore")
+                log.error("gotify failed: HTTP %s: %s", code, body)
+                return False
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        log.error("gotify http error: %s %s", e.code, body)
+        return False
+    except Exception as e:
+        log.error("gotify error: %s", e)
+        return False
 
