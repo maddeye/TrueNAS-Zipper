@@ -614,7 +614,7 @@ def _process_folder_with_retries(
     last_err: Exception | None = None
     for attempt in range(1, int(config.retries) + 1):
         try:
-            outcome = _process_folder_once(source_folder, snapshot_name, config, dry_run, log)
+            outcome = _process_folder_once(source_folder, snapshot_name, config, dry_run, run_id, log)
             if outcome == "skipped":
                 return "skipped"  # type: ignore[return-value]
             if config.gotify.notify_success:
@@ -673,6 +673,7 @@ def _process_folder_once(
     snapshot_name: str | None,
     config: AppConfig,
     dry_run: bool,
+    run_id: str,
     log: logging.Logger,
 ) -> str:
     folder_name = source_folder.name
@@ -709,14 +710,14 @@ def _process_folder_once(
     manifest_hash = _compute_manifest_hash(source_folder, file_list)
     prev_state = _read_state_file(state_path, log)
     if prev_state and prev_state.get("last_manifest_sha256") == manifest_hash:
-        log.info("skip unchanged: %s", folder_name)
+        _log_with_ids(log, run_id, folder_name).info("skip unchanged: %s", folder_name)
         return "skipped"
 
     # Temp paths (ensure same filesystem as target for atomic rename)
     run_tag = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     tmp_parent = _choose_temp_parent(config.tmp_dir, target_dir)
     if tmp_parent != config.tmp_dir:
-        log.info("temp dir moved to target fs: %s", tmp_parent)
+        _log_with_ids(log, run_id, folder_name).info("temp dir moved to target fs: %s", tmp_parent)
     tmp_run_dir = tmp_parent / f"zipper-{run_tag}-{folder_name}"
     tmp_run_dir.mkdir(parents=True, exist_ok=True)
     tmp_zip = tmp_run_dir / zip_name
@@ -734,12 +735,12 @@ def _process_folder_once(
                     f"insufficient space in {tmp_parent} (free={free_bytes}, need~={bytes_needed})"
                 )
         except Exception as e:
-            log.error("preflight failed: %s", e)
+            _log_with_ids(log, run_id, folder_name).error("preflight failed: %s", e)
             raise
 
     # Create zip
     if dry_run:
-        log.info("dry-run: would zip %s into %s", folder_name, tmp_zip)
+        _log_with_ids(log, run_id, folder_name).info("dry-run: would zip %s into %s", folder_name, tmp_zip)
     else:
         _create_zip(tmp_zip, source_folder, file_list)
         _verify_zip_readable(tmp_zip)
@@ -767,14 +768,14 @@ def _process_folder_once(
         "snapshot": snapshot_name or "none",
     }
     if dry_run:
-        log.info("dry-run: would write metadata for %s", folder_name)
+        _log_with_ids(log, run_id, folder_name).info("dry-run: would write metadata for %s", folder_name)
     else:
         with tmp_meta.open("w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, sort_keys=True)
 
     # Target org and rotation (scheme A)
     if dry_run:
-        log.info("dry-run: would ensure target dir %s", target_dir)
+        _log_with_ids(log, run_id, folder_name).info("dry-run: would ensure target dir %s", target_dir)
     else:
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -864,7 +865,7 @@ def _process_folder_once(
             except Exception:
                 pass
 
-    log.info("done: %s -> %s", folder_name, target_dir)
+    _log_with_ids(log, run_id, folder_name).info("done: %s -> %s", folder_name, target_dir)
     return "ok"
 
     # Write/update state atomically
