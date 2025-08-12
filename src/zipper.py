@@ -16,6 +16,7 @@ import sys
 import re
 import subprocess
 import time
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,20 +103,42 @@ def setup_logging(log_file: Path, verbosity: int) -> logging.Logger:
     log.setLevel(logging.DEBUG)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 
-    # File handler
-    file_handler = logging.handlers.RotatingFileHandler(
-        str(log_file), maxBytes=5 * 1024 * 1024, backupCount=3
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(fmt)
-    log.addHandler(file_handler)
-
-    # Syslog handler (FreeBSD: /var/run/log)
+    # File handler with fallback if unwritable
+    file_handler = None
     try:
-        syslog_handler = logging.handlers.SysLogHandler(address="/var/run/log")
-        syslog_handler.setLevel(logging.INFO)
-        syslog_handler.setFormatter(logging.Formatter("zipper: %(levelname)s %(message)s"))
-        log.addHandler(syslog_handler)
+        try:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        file_handler = logging.handlers.RotatingFileHandler(
+            str(log_file), maxBytes=5 * 1024 * 1024, backupCount=3
+        )
+    except Exception:
+        fallback = Path.cwd() / "zipper.log"
+        try:
+            file_handler = logging.handlers.RotatingFileHandler(
+                str(fallback), maxBytes=5 * 1024 * 1024, backupCount=3
+            )
+        except Exception:
+            file_handler = None
+    if file_handler is not None:
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(fmt)
+        log.addHandler(file_handler)
+
+    # Syslog handler (FreeBSD: /var/run/log; Linux: /dev/log). Only if root.
+    try:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            syslog_socket = None
+            for candidate in ("/var/run/log", "/dev/log"):
+                if Path(candidate).exists():
+                    syslog_socket = candidate
+                    break
+            if syslog_socket is not None:
+                syslog_handler = logging.handlers.SysLogHandler(address=syslog_socket)
+                syslog_handler.setLevel(logging.INFO)
+                syslog_handler.setFormatter(logging.Formatter("zipper: %(levelname)s %(message)s"))
+                log.addHandler(syslog_handler)
     except Exception:
         # Fall back silently if syslog unavailable
         pass
@@ -180,36 +203,46 @@ def main(argv: list[str]) -> int:
     try:
         log.info("startup: dry_run=%s workers=%s", args.dry_run, config.max_workers)
 
-        dataset = _find_dataset_for_path(config.source_path, log)
-        if dataset is None:
-            log.error("failed to resolve dataset for %s", config.source_path)
-            return 1
-
-        mountpoint = _get_dataset_mountpoint(dataset, log)
-        if mountpoint is None:
-            log.error("failed to resolve mountpoint for %s", dataset)
-            return 1
-
-        snapshot_name = _create_snapshot(dataset, config.snapshot_prefix, args.dry_run, log)
-        if snapshot_name is None:
-            log.error("failed to create snapshot for %s", dataset)
-            return 1
-        snapshot_path = _snapshot_path(Path(mountpoint), snapshot_name)
-        log.info("snapshot ready: %s at %s", snapshot_name, snapshot_path)
-
-        prev_snapshot = _previous_snapshot(dataset, config.snapshot_prefix, snapshot_name, log)
-        if prev_snapshot:
-            log.info("previous snapshot: %s", prev_snapshot)
-        else:
-            log.info("no previous snapshot; full scan")
-
+        zfs_available = shutil.which("zfs") is not None
+        dataset = None
+        snapshot_name = None
+        prev_snapshot = None
         changed_paths: set[str] = set()
-        if prev_snapshot:
-            changed_paths = _zfs_diff_paths(dataset, prev_snapshot, snapshot_name, log)
-            log.info("zfs diff reports %d changed paths", len(changed_paths))
+
+        if zfs_available:
+            dataset = _find_dataset_for_path(config.source_path, log)
+            if dataset is None:
+                log.error("failed to resolve dataset for %s", config.source_path)
+                return 1
+
+            mountpoint = _get_dataset_mountpoint(dataset, log)
+            if mountpoint is None:
+                log.error("failed to resolve mountpoint for %s", dataset)
+                return 1
+
+            snapshot_name = _create_snapshot(dataset, config.snapshot_prefix, args.dry_run, log)
+            if snapshot_name is None:
+                log.error("failed to create snapshot for %s", dataset)
+                return 1
+            snapshot_path = _snapshot_path(Path(mountpoint), snapshot_name)
+            log.info("snapshot ready: %s at %s", snapshot_name, snapshot_path)
+
+            prev_snapshot = _previous_snapshot(dataset, config.snapshot_prefix, snapshot_name, log)
+            if prev_snapshot:
+                log.info("previous snapshot: %s", prev_snapshot)
+            else:
+                log.info("no previous snapshot; full scan")
+
+            if prev_snapshot:
+                changed_paths = _zfs_diff_paths(dataset, prev_snapshot, snapshot_name, log)
+                log.info("zfs diff reports %d changed paths", len(changed_paths))
+
+            source_root = Path(snapshot_path)
+        else:
+            log.info("zfs not found; planning without snapshot")
+            source_root = config.source_path
 
         valid_folder_pattern = re.compile(r"^[A-Z0-9]{4}$")
-        source_root = Path(snapshot_path)
         if not source_root.is_dir():
             log.error("snapshot root is not a directory: %s", source_root)
             return 1
@@ -247,10 +280,6 @@ def main(argv: list[str]) -> int:
                 os.close(lock_fd)
         except Exception:
             pass
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
 
 # -----------------
 # ZFS helpers
@@ -375,5 +404,9 @@ def _strip_mountpoint(dataset: str, full_path: str, log: logging.Logger) -> str:
     if full_path.startswith(mp.rstrip("/") + "/"):
         return full_path[len(mp) :]
     return full_path
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
 
 
