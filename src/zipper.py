@@ -22,6 +22,8 @@ import urllib.error
 import json as jsonlib
 from dataclasses import dataclass
 from pathlib import Path
+import hashlib
+from datetime import datetime, timezone
 
 try:
     import fcntl  # FreeBSD/Unix locking
@@ -289,8 +291,16 @@ def main(argv: list[str]) -> int:
 
         log.info("%d folders to process", len(to_process))
         for folder in to_process:
-            log.info("plan: would process %s", folder.name)
-        # Archiving implementation will follow in subsequent steps.
+            success = _process_folder_with_retries(
+                source_folder=folder,
+                snapshot_name=snapshot_name if zfs_available else None,
+                config=config,
+                dry_run=args.dry_run,
+                log=log,
+            )
+            if not success:
+                # Continue to next folder after notification
+                continue
         return 0
     finally:
         try:
@@ -464,6 +474,215 @@ def _send_gotify(
         body = e.read().decode("utf-8", errors="ignore")
         log.error("gotify http error: %s %s", e.code, body)
         return False
+
+
+# -----------------
+# Archiving
+# -----------------
+
+def _process_folder_with_retries(
+    source_folder: Path,
+    snapshot_name: str | None,
+    config: AppConfig,
+    dry_run: bool,
+    log: logging.Logger,
+) -> bool:
+    last_err: Exception | None = None
+    for attempt in range(1, int(config.retries) + 1):
+        try:
+            _process_folder_once(source_folder, snapshot_name, config, dry_run, log)
+            return True
+        except Exception as e:
+            last_err = e
+            wait_sec = min(60, 2 ** attempt)
+            log.error(
+                "attempt %d/%d failed for %s: %s; retrying in %ss",
+                attempt,
+                config.retries,
+                source_folder.name,
+                e,
+                wait_sec,
+            )
+            try:
+                time.sleep(wait_sec)
+            except Exception:
+                pass
+    # Final failure
+    msg = f"folder {source_folder.name}: failed after {config.retries} attempts"
+    _send_gotify(
+        gotify=config.gotify,
+        title="zipper failure",
+        message=msg,
+        priority=config.gotify.priority,
+        log=log,
+    )
+    log.error(msg)
+    return False
+
+
+def _process_folder_once(
+    source_folder: Path,
+    snapshot_name: str | None,
+    config: AppConfig,
+    dry_run: bool,
+    log: logging.Logger,
+) -> None:
+    folder_name = source_folder.name
+    assert re.fullmatch(r"^[A-Z0-9]{4}$", folder_name), "invalid folder name"
+
+    # Collect files
+    file_list: list[Path] = []
+    total_bytes = 0
+    for root, dirs, files in os.walk(source_folder, followlinks=False):
+        # Skip any symlinks in dirs
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+        for fname in files:
+            full_path = Path(root) / fname
+            try:
+                st = os.lstat(full_path)
+            except FileNotFoundError:
+                continue
+            # Regular files only
+            if not stat_is_regular(st.st_mode):
+                continue
+            if os.path.islink(full_path):
+                continue
+            file_list.append(full_path)
+            total_bytes += st.st_size
+
+    rel_paths = [str(p.relative_to(source_folder)) for p in file_list]
+    zip_name = f"{folder_name}.zip"
+
+    # Temp paths
+    run_tag = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    tmp_run_dir = config.tmp_dir / f"zipper-{run_tag}-{folder_name}"
+    tmp_run_dir.mkdir(parents=True, exist_ok=True)
+    tmp_zip = tmp_run_dir / zip_name
+    tmp_meta = tmp_run_dir / "metadata.json"
+    tmp_md5 = tmp_run_dir / f"{zip_name}.md5"
+    tmp_sha256 = tmp_run_dir / f"{zip_name}.sha256"
+
+    # Create zip
+    if dry_run:
+        log.info("dry-run: would zip %s into %s", folder_name, tmp_zip)
+    else:
+        _create_zip(tmp_zip, source_folder, file_list)
+        _verify_zip_readable(tmp_zip)
+
+    # Hashes
+    if dry_run:
+        zip_md5 = "0" * 32
+        zip_sha256 = "0" * 64
+    else:
+        zip_md5 = _hash_file(tmp_zip, "md5")
+        zip_sha256 = _hash_file(tmp_zip, "sha256")
+        _write_text(tmp_md5, f"{zip_md5}  {zip_name}\n")
+        _write_text(tmp_sha256, f"{zip_sha256}  {zip_name}\n")
+
+    # Metadata
+    created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    metadata = {
+        "zip_name": zip_name,
+        "files": rel_paths,
+        "zip_md5": zip_md5,
+        "zip_sha256": zip_sha256,
+        "total_files": len(rel_paths),
+        "total_bytes": int(total_bytes),
+        "created_at_utc": created,
+        "snapshot": snapshot_name or "none",
+    }
+    if dry_run:
+        log.info("dry-run: would write metadata for %s", folder_name)
+    else:
+        with tmp_meta.open("w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2, sort_keys=True)
+
+    # Target org and rotation (scheme A)
+    target_dir = config.target_path / folder_name
+    if dry_run:
+        log.info("dry-run: would ensure target dir %s", target_dir)
+    else:
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+    current_zip = target_dir / zip_name
+    prev_zip = target_dir / f"{folder_name}.prev.zip"
+    current_meta = target_dir / "metadata.json"
+    prev_meta = target_dir / "metadata.prev.json"
+    current_md5 = target_dir / f"{zip_name}.md5"
+    prev_md5 = target_dir / f"{folder_name}.prev.zip.md5"
+    current_sha256 = target_dir / f"{zip_name}.sha256"
+    prev_sha256 = target_dir / f"{folder_name}.prev.zip.sha256"
+
+    if not dry_run:
+        # Delete old prev
+        for p in (prev_zip, prev_meta, prev_md5, prev_sha256):
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
+        # Rotate current to prev if exists
+        if current_zip.exists():
+            current_zip.rename(prev_zip)
+        if current_meta.exists():
+            current_meta.rename(prev_meta)
+        if current_md5.exists():
+            current_md5.rename(prev_md5)
+        if current_sha256.exists():
+            current_sha256.rename(prev_sha256)
+
+        # Move new files atomically into place
+        os.replace(tmp_zip, current_zip)
+        os.replace(tmp_meta, current_meta)
+        if tmp_md5.exists():
+            os.replace(tmp_md5, current_md5)
+        if tmp_sha256.exists():
+            os.replace(tmp_sha256, current_sha256)
+
+        # Cleanup temp dir (best-effort)
+        try:
+            tmp_run_dir.rmdir()
+        except Exception:
+            pass
+
+    log.info("done: %s -> %s", folder_name, target_dir)
+
+
+def _create_zip(zip_path: Path, source_folder: Path, file_list: list[Path]) -> None:
+    import zipfile
+
+    with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+        for f in file_list:
+            arcname = str(f.relative_to(source_folder))
+            zf.write(f, arcname)
+
+
+def _verify_zip_readable(zip_path: Path) -> None:
+    import zipfile
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        bad = zf.testzip()
+        if bad is not None:
+            raise RuntimeError(f"zip verify failed, first bad entry: {bad}")
+
+
+def _hash_file(path: Path, algo: str) -> str:
+    h = hashlib.new(algo)
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _write_text(path: Path, content: str) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def stat_is_regular(mode: int) -> bool:
+    import stat as pystat
+
+    return pystat.S_ISREG(mode)
     except Exception as e:
         log.error("gotify error: %s", e)
         return False

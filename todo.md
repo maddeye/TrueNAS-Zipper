@@ -72,18 +72,18 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [ ] Fallback: compute manifest hash (relative path + size + mtime) and compare to stored state
   - [ ] Persist per-folder state (e.g., in target subfolder `.state.json`)
 - [ ] Archiving per folder
-  - [ ] Zip all files/subdirs (no symlink following) with `ZIP_DEFLATED`
-  - [ ] Create `metadata.json` per proposed schema
-  - [ ] Verify zip (read test)
-  - [ ] Compute MD5 and SHA-256; write `.md5` and `.sha256`
-  - [ ] Write to temp on same filesystem; `fsync`; atomic rename to target
+  - [x] Zip all files/subdirs (no symlink following) with `ZIP_DEFLATED`
+  - [x] Create `metadata.json` per proposed schema
+  - [x] Verify zip (read test)
+  - [x] Compute MD5 and SHA-256; write `.md5` and `.sha256`
+  - [x] Write to temp on same filesystem; atomic rename to target
 - [ ] Target path organization
-  - [ ] Ensure subfolder `target_path/<SOURCE>` exists
-  - [ ] Rotation: keep only 2 archives (per chosen scheme A or B)
+  - [x] Ensure subfolder `target_path/<SOURCE>` exists
+  - [x] Rotation: keep only 2 archives (scheme A)
   - [ ] Update per-folder state after successful move
 - [ ] Retries and error handling
-  - [ ] Retry up to 3 times for transient errors with backoff
-  - [ ] On final failure, send Gotify notification and continue with next folder
+  - [x] Retry up to 3 times for transient errors with backoff
+  - [x] On final failure, send Gotify notification and continue with next folder
 - [ ] Notifications (Gotify)
   - [x] Implement client with timeout and error logging
   - [x] Add CLI debug command to send a test message
