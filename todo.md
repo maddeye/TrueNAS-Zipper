@@ -81,7 +81,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [x] Ensure subfolder `target_path/<SOURCE>` exists
   - [x] Rotation: keep only 2 archives (scheme A)
   - [x] Publish with rollback safety (no destructive changes on failure)
-  - [ ] Update per-folder state after successful move
+  - [x] Update per-folder state after successful move
 - [ ] Retries and error handling
   - [x] Retry up to 3 times for transient errors with backoff
   - [x] On final failure, send Gotify notification and continue with next folder
@@ -93,13 +93,13 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [x] Worker pool capped by `max_workers`; default 1
   - [x] Per-task timeouts to avoid stalls
 - [ ] Logging and observability
-  - [ ] Syslog integration (FreeBSD) + rotating file log
-  - [ ] Include correlation IDs per run and per folder
+  - [x] Syslog integration (FreeBSD) + rotating file log
+  - [x] Include correlation IDs per run and per folder
 - [ ] Cron integration
-  - [ ] Document crontab entry and environment setup on TrueNAS CORE
-  - [ ] Include lock guard in cron example to avoid overlaps
+  - [x] Document crontab entry and environment setup on TrueNAS CORE
+  - [x] Include lock guard in cron example to avoid overlaps
 - [ ] Dry run and self-checks
-  - [ ] `--dry-run` simulates actions and prints planned changes
+  - [x] `--dry-run` simulates actions and prints planned changes
   - [x] Preflight checks: free space, tmp/target writability (temp free space)
 - [ ] QA on small test dataset
   - [ ] Create sample source structure and validate outputs
