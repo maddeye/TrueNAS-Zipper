@@ -39,6 +39,7 @@ class GotifyConfig:
     token: str
     priority: int = 5
     timeout_seconds: int = 10
+    notify_success: bool = False
 
 
 @dataclass
@@ -95,6 +96,7 @@ class AppConfig:
                 token=str(gotify_data["token"]),
                 priority=int(gotify_data.get("priority", 5)),
                 timeout_seconds=int(gotify_data.get("timeout_seconds", 10)),
+                notify_success=bool(gotify_data.get("notify_success", False)),
             ),
         )
 
@@ -562,6 +564,19 @@ def _process_folder_with_retries(
     for attempt in range(1, int(config.retries) + 1):
         try:
             _process_folder_once(source_folder, snapshot_name, config, dry_run, log)
+            if config.gotify.notify_success:
+                _send_gotify(
+                    gotify=config.gotify,
+                    title="Zipper job: backup OK",
+                    message=(
+                        f"Backup completed on {host}\n"
+                        f"Run: {run_id}\n"
+                        f"Folder: {source_folder.name}\n"
+                        f"Target: {config.target_path / source_folder.name}"
+                    ),
+                    priority=max(1, int(config.gotify.priority) - 1),
+                    log=log,
+                )
             return True
         except Exception as e:
             last_err = e

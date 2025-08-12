@@ -18,7 +18,7 @@ See `config.json.example` for all options. Key fields:
 - `snapshot_retention`: keep last N snapshots created by the tool
 - `max_workers`: default 1; raise carefully
 - `retries`: default 3
-- `gotify`: `url`, `token`, `priority`
+- `gotify`: `url`, `token`, `priority`, `notify_success`
 
 ### Run manually
 ```bash
