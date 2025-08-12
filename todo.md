@@ -91,7 +91,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [x] Send on failures and optionally on successes (configurable; default failures only)
 - [ ] Concurrency
   - [x] Worker pool capped by `max_workers`; default 1
-  - [ ] Per-task timeouts to avoid stalls
+  - [x] Per-task timeouts to avoid stalls
 - [ ] Logging and observability
   - [ ] Syslog integration (FreeBSD) + rotating file log
   - [ ] Include correlation IDs per run and per folder

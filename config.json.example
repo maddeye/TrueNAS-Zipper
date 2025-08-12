@@ -4,6 +4,7 @@
   "snapshot_prefix": "auto-zip",
   "snapshot_retention": 10,
   "max_workers": 1,
+  "per_task_timeout_seconds": 0,
   "retries": 3,
   "nice": 10,
   "umask": "027",

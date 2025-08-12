@@ -56,6 +56,7 @@ class AppConfig:
     tmp_dir: Path
     log_file: Path
     gotify: GotifyConfig
+    per_task_timeout_seconds: int = 0
 
     @staticmethod
     def from_dict(data: dict) -> "AppConfig":
@@ -98,6 +99,7 @@ class AppConfig:
                 timeout_seconds=int(gotify_data.get("timeout_seconds", 10)),
                 notify_success=bool(gotify_data.get("notify_success", False)),
             ),
+            per_task_timeout_seconds=int(data.get("per_task_timeout_seconds", 0)),
         )
 
 
@@ -324,8 +326,9 @@ def main(argv: list[str]) -> int:
 
         if int(config.max_workers) > 1:
             with ThreadPoolExecutor(max_workers=int(config.max_workers)) as executor:
-                futures = {
-                    executor.submit(
+                futures = {}
+                for folder in to_process:
+                    fut = executor.submit(
                         _process_folder_with_retries,
                         folder,
                         snapshot_name if zfs_available else None,
@@ -334,13 +337,13 @@ def main(argv: list[str]) -> int:
                         run_id,
                         host,
                         log,
-                    ): folder
-                    for folder in to_process
-                }
+                    )
+                    futures[fut] = folder
                 for fut in as_completed(futures):
                     folder = futures[fut]
                     try:
-                        result = fut.result()
+                        timeout_s = int(getattr(config, "per_task_timeout_seconds", 0)) or None
+                        result = fut.result(timeout=timeout_s)
                         if result is True:
                             completed += 1
                         elif result == "skipped":
