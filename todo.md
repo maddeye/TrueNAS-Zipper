@@ -103,7 +103,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [x] Preflight checks: free space, tmp/target writability (temp free space)
 - [ ] QA on small test dataset
   - [x] Create sample source structure and validate outputs (script)
-  - [ ] Verify integrity, metadata correctness, and retention
+  - [x] Verify integrity, metadata correctness, and retention
 
 ### Commit guidance
 - Keep each task small; commit after each feature with messages ≤ 50 chars.
