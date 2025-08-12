@@ -51,9 +51,9 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
 - [x] Create and track this `todo.md`
 - [x] Confirm decisions above and freeze metadata/config schema
 - [ ] Initialize repo scaffolding (directories, placeholders) without implementation
-  - [ ] Create `config.json.example`
-  - [ ] Create `README.md` with usage and cron notes
-  - [ ] Ensure Python 3 path on TrueNAS CORE (`/usr/local/bin/python3`), document shebang
+  - [x] Create `config.json.example`
+  - [x] Create `README.md` with usage and cron notes
+  - [x] Ensure Python 3 path on TrueNAS CORE (`/usr/local/bin/python3`), document shebang
 - [ ] Implement CLI skeleton (no side effects)
   - [ ] Entrypoint `zipper.py` with `--config`, `--dry-run`, `--verbose`
   - [ ] Load config, validate paths/permissions, set `umask`, set `nice`
