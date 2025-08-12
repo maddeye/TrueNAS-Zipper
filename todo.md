@@ -69,8 +69,8 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [ ] Skip symlinks, devices, sockets, fifos
 - [ ] Change detection (skip unchanged)
   - [x] Prefer `zfs diff <prev>@<curr>` if available/allowed to detect changes
-  - [ ] Fallback: compute manifest hash (relative path + size + mtime) and compare to stored state
-  - [ ] Persist per-folder state (e.g., in target subfolder `.state.json`)
+  - [x] Fallback: compute manifest hash (relative path + size + mtime) and compare to stored state
+  - [x] Persist per-folder state (e.g., in target subfolder `.state.json`)
 - [ ] Archiving per folder
   - [x] Zip all files/subdirs (no symlink following) with `ZIP_DEFLATED`
   - [x] Create `metadata.json` per proposed schema

@@ -633,6 +633,17 @@ def _process_folder_once(
     rel_paths = [str(p.relative_to(source_folder)) for p in file_list]
     zip_name = f"{folder_name}.zip"
 
+    # Target dir and state
+    target_dir = config.target_path / folder_name
+    state_path = target_dir / ".state.json"
+
+    # Change detection (manifest/hash)
+    manifest_hash = _compute_manifest_hash(source_folder, file_list)
+    prev_state = _read_state_file(state_path, log)
+    if prev_state and prev_state.get("last_manifest_sha256") == manifest_hash:
+        log.info("skip unchanged: %s", folder_name)
+        return
+
     # Temp paths
     run_tag = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     tmp_run_dir = config.tmp_dir / f"zipper-{run_tag}-{folder_name}"
@@ -678,7 +689,6 @@ def _process_folder_once(
             json.dump(metadata, f, indent=2, sort_keys=True)
 
     # Target org and rotation (scheme A)
-    target_dir = config.target_path / folder_name
     if dry_run:
         log.info("dry-run: would ensure target dir %s", target_dir)
     else:
@@ -772,6 +782,15 @@ def _process_folder_once(
 
     log.info("done: %s -> %s", folder_name, target_dir)
 
+    # Write/update state atomically
+    if not dry_run:
+        new_state = {
+            "last_manifest_sha256": manifest_hash,
+            "last_snapshot": snapshot_name or "none",
+            "last_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        _atomic_write_json(state_path, new_state, log)
+
 
 def _create_zip(zip_path: Path, source_folder: Path, file_list: list[Path]) -> None:
     import zipfile
@@ -808,6 +827,46 @@ def stat_is_regular(mode: int) -> bool:
     import stat as pystat
 
     return pystat.S_ISREG(mode)
+
+
+def _compute_manifest_hash(source_folder: Path, files: list[Path]) -> str:
+    sha = hashlib.sha256()
+    for p in sorted(files, key=lambda x: str(x)):
+        try:
+            st = os.lstat(p)
+        except FileNotFoundError:
+            # Skip disappearing files
+            continue
+        rel = str(p.relative_to(source_folder))
+        line = f"{rel}\u0001{st.st_size}\u0001{getattr(st, 'st_mtime_ns', int(st.st_mtime * 1e9))}\n"
+        sha.update(line.encode("utf-8", errors="strict"))
+    return sha.hexdigest()
+
+
+def _read_state_file(state_path: Path, log: logging.Logger) -> dict | None:
+    try:
+        if not state_path.exists():
+            return None
+        with state_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        log.warning("failed to read state %s: %s", state_path, e)
+        return None
+
+
+def _atomic_write_json(dest: Path, data: dict, log: logging.Logger) -> None:
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+        os.replace(tmp, dest)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
