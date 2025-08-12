@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import hashlib
 from datetime import datetime, timezone
+import socket
 
 try:
     import fcntl  # FreeBSD/Unix locking
@@ -211,6 +212,9 @@ def main(argv: list[str]) -> int:
     try:
         log.info("startup: dry_run=%s workers=%s", args.dry_run, config.max_workers)
 
+        run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S") + f"-{os.getpid()}"
+        host = socket.gethostname()
+
         # Debug path: send Gotify and exit
         if args.send_gotify is not None:
             prio = args.priority if args.priority is not None else config.gotify.priority
@@ -296,6 +300,8 @@ def main(argv: list[str]) -> int:
                 snapshot_name=snapshot_name if zfs_available else None,
                 config=config,
                 dry_run=args.dry_run,
+                run_id=run_id,
+                host=host,
                 log=log,
             )
             if not success:
@@ -485,6 +491,8 @@ def _process_folder_with_retries(
     snapshot_name: str | None,
     config: AppConfig,
     dry_run: bool,
+    run_id: str,
+    host: str,
     log: logging.Logger,
 ) -> bool:
     last_err: Exception | None = None
@@ -508,10 +516,19 @@ def _process_folder_with_retries(
             except Exception:
                 pass
     # Final failure
-    msg = f"folder {source_folder.name}: failed after {config.retries} attempts"
+    msg = (
+        f"Backup failed on {host}\n"
+        f"Run: {run_id}\n"
+        f"Folder: {source_folder.name}\n"
+        f"Source: {source_folder}\n"
+        f"Target: {config.target_path / source_folder.name}\n"
+        f"Snapshot: {snapshot_name or 'none'}\n"
+        f"Attempts: {config.retries}\n"
+        f"Error: {type(last_err).__name__}: {last_err}"
+    )
     _send_gotify(
         gotify=config.gotify,
-        title="zipper failure",
+        title="Zipper job: backup failed",
         message=msg,
         priority=config.gotify.priority,
         log=log,
