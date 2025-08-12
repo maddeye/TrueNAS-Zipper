@@ -39,13 +39,33 @@ chmod +x scripts/qa_smoke.sh
 ./scripts/qa_smoke.sh ./config.json
 ```
 
-### Cron (hourly)
+### Cron (hourly) — CORE (FreeBSD)
 Use a lock to avoid overlaps:
 ```cron
 0 * * * * /usr/bin/flock -n /var/run/zipper.cron.lock \
   /usr/local/bin/python3 /usr/local/zipper/src/zipper.py \
   --config /usr/local/zipper/config.json >> /var/log/zipper.cron 2>&1
 ```
+Ensure the job runs as root so snapshots can be created.
+
+### Cron (hourly) — SCALE (Linux)
+Add a Cron Job in the TrueNAS SCALE UI (System Settings → Advanced → Cron Jobs):
+- Command:
+```bash
+/usr/bin/flock -n /var/run/zipper.cron.lock \
+  /usr/bin/python3 /srv/zipper/src/zipper.py \
+  --config /srv/zipper/config.json >> /var/log/zipper.cron 2>&1
+```
+- Schedule: hourly (minute 0)
+- User: root (required for ZFS snapshots)
+- Enabled: yes
+
+### Deployment recommendations (CORE and SCALE)
+- Place the project under `/usr/local/zipper` (CORE) or `/srv/zipper` (SCALE).
+- Set `source_path` and `target_path` to datasets under `/mnt/...`.
+- Make sure `tmp_dir` exists and resides on the same filesystem as `target_path` for atomic moves.
+- If `/var/log/zipper.log` is not writable, the app falls back to `./zipper.log`.
+- Syslog: CORE uses `/var/run/log`, SCALE uses `/dev/log`; detection is automatic when running as root.
 
 ### Notes
 - Folder regex: `^[A-Z0-9]{4}$`
