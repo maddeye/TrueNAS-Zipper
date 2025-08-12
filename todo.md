@@ -55,20 +55,20 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [x] Create `README.md` with usage and cron notes
   - [x] Ensure Python 3 path on TrueNAS CORE (`/usr/local/bin/python3`), document shebang
 - [ ] Implement CLI skeleton (no side effects)
-  - [ ] Entrypoint `zipper.py` with `--config`, `--dry-run`, `--verbose`
-  - [ ] Load config, validate paths/permissions, set `umask`, set `nice`
-  - [ ] Structured logging to syslog and file
-  - [ ] Locking (PID file + non-blocking lock; fail fast if locked)
+  - [x] Entrypoint `zipper.py` with `--config`, `--dry-run`, `--verbose`
+  - [x] Load config, validate paths/permissions, set `umask`, set `nice`
+  - [x] Structured logging to syslog and file
+  - [x] Locking (PID file + non-blocking lock; fail fast if locked)
 - [ ] ZFS snapshot handling (TrueNAS CORE / FreeBSD)
-  - [ ] Create read-only snapshot of source dataset with prefix
-  - [ ] Derive snapshot mount path via `.zfs/snapshot/<name>`
+  - [x] Create read-only snapshot of source dataset with prefix
+  - [x] Derive snapshot mount path via `.zfs/snapshot/<name>`
   - [ ] Cleanup old snapshots created by this tool (bounded)
 - [ ] Folder enumeration and validation
-  - [ ] List subfolders in snapshot root
-  - [ ] Filter by `^[A-Z0-9]{4}$`
+  - [x] List subfolders in snapshot root
+  - [x] Filter by `^[A-Z0-9]{4}$`
   - [ ] Skip symlinks, devices, sockets, fifos
 - [ ] Change detection (skip unchanged)
-  - [ ] Prefer `zfs diff <prev>@<curr>` if available/allowed to detect changes
+  - [x] Prefer `zfs diff <prev>@<curr>` if available/allowed to detect changes
   - [ ] Fallback: compute manifest hash (relative path + size + mtime) and compare to stored state
   - [ ] Persist per-folder state (e.g., in target subfolder `.state.json`)
 - [ ] Archiving per folder

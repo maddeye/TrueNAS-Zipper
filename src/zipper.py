@@ -13,6 +13,9 @@ import logging
 import logging.handlers
 import os
 import sys
+import re
+import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -176,7 +179,67 @@ def main(argv: list[str]) -> int:
 
     try:
         log.info("startup: dry_run=%s workers=%s", args.dry_run, config.max_workers)
-        # Implementation will follow in subsequent steps.
+
+        dataset = _find_dataset_for_path(config.source_path, log)
+        if dataset is None:
+            log.error("failed to resolve dataset for %s", config.source_path)
+            return 1
+
+        mountpoint = _get_dataset_mountpoint(dataset, log)
+        if mountpoint is None:
+            log.error("failed to resolve mountpoint for %s", dataset)
+            return 1
+
+        snapshot_name = _create_snapshot(dataset, config.snapshot_prefix, args.dry_run, log)
+        if snapshot_name is None:
+            log.error("failed to create snapshot for %s", dataset)
+            return 1
+        snapshot_path = _snapshot_path(Path(mountpoint), snapshot_name)
+        log.info("snapshot ready: %s at %s", snapshot_name, snapshot_path)
+
+        prev_snapshot = _previous_snapshot(dataset, config.snapshot_prefix, snapshot_name, log)
+        if prev_snapshot:
+            log.info("previous snapshot: %s", prev_snapshot)
+        else:
+            log.info("no previous snapshot; full scan")
+
+        changed_paths: set[str] = set()
+        if prev_snapshot:
+            changed_paths = _zfs_diff_paths(dataset, prev_snapshot, snapshot_name, log)
+            log.info("zfs diff reports %d changed paths", len(changed_paths))
+
+        valid_folder_pattern = re.compile(r"^[A-Z0-9]{4}$")
+        source_root = Path(snapshot_path)
+        if not source_root.is_dir():
+            log.error("snapshot root is not a directory: %s", source_root)
+            return 1
+
+        folders: list[Path] = []
+        for entry in sorted(source_root.iterdir()):
+            if not entry.is_dir():
+                continue
+            name = entry.name
+            if not valid_folder_pattern.match(name):
+                continue
+            folders.append(entry)
+
+        log.info("found %d candidate folders", len(folders))
+
+        to_process: list[Path] = []
+        if prev_snapshot:
+            for folder in folders:
+                # Determine if any changed path falls under this folder
+                prefix = f"/{folder.name}/"
+                # zfs diff paths are absolute relative to the dataset root
+                if any(p == f"/{folder.name}" or p.startswith(prefix) for p in changed_paths):
+                    to_process.append(folder)
+        else:
+            to_process = folders
+
+        log.info("%d folders to process", len(to_process))
+        for folder in to_process:
+            log.info("plan: would process %s", folder.name)
+        # Archiving implementation will follow in subsequent steps.
         return 0
     finally:
         try:
@@ -188,5 +251,129 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
+
+# -----------------
+# ZFS helpers
+# -----------------
+
+def _run_cmd(cmd: list[str], log: logging.Logger, timeout: int = 30) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        log.error("command timed out: %s", " ".join(cmd))
+        return 124, "", "timeout"
+    except Exception as e:
+        log.error("command failed: %s (%s)", " ".join(cmd), e)
+        return 1, "", str(e)
+
+
+def _find_dataset_for_path(path: Path, log: logging.Logger) -> str | None:
+    abs_path = str(path)
+    code, out, err = _run_cmd(["zfs", "list", "-H", "-o", "name,mountpoint"], log)
+    if code != 0:
+        log.error("zfs list failed: %s", err.strip())
+        return None
+    best_match: tuple[str, str] | None = None
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) != 2:
+            continue
+        ds, mp = parts
+        if mp == "-":
+            continue
+        if abs_path == mp or abs_path.startswith(mp.rstrip("/") + "/"):
+            if best_match is None or len(mp) > len(best_match[1]):
+                best_match = (ds, mp)
+    return best_match[0] if best_match else None
+
+
+def _get_dataset_mountpoint(dataset: str, log: logging.Logger) -> str | None:
+    code, out, err = _run_cmd(["zfs", "list", "-H", "-o", "mountpoint", dataset], log)
+    if code != 0:
+        log.error("zfs list mountpoint failed: %s", err.strip())
+        return None
+    mp = out.strip()
+    return None if not mp or mp == "-" else mp
+
+
+def _create_snapshot(dataset: str, prefix: str, dry_run: bool, log: logging.Logger) -> str | None:
+    ts = time.strftime("%Y%m%d%H%M%S", time.gmtime())
+    snap_name = f"{prefix}-{ts}"
+    full = f"{dataset}@{snap_name}"
+    if dry_run:
+        log.info("dry-run: would create snapshot %s", full)
+        return snap_name
+    code, out, err = _run_cmd(["zfs", "snapshot", "-r", full], log)
+    if code != 0:
+        log.error("zfs snapshot failed: %s", err.strip())
+        return None
+    return snap_name
+
+
+def _previous_snapshot(dataset: str, prefix: str, current: str, log: logging.Logger) -> str | None:
+    code, out, err = _run_cmd(["zfs", "list", "-t", "snapshot", "-H", "-o", "name", "-s", "creation", "-r", dataset], log)
+    if code != 0:
+        log.error("zfs list snapshots failed: %s", err.strip())
+        return None
+    snaps: list[str] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "@" not in line:
+            continue
+        ds, sn = line.split("@", 1)
+        if ds != dataset:
+            continue
+        if not sn.startswith(prefix + "-"):
+            continue
+        snaps.append(sn)
+    snaps = [s for s in snaps if s != current]
+    return snaps[-1] if snaps else None
+
+
+def _snapshot_path(mountpoint: Path, snapshot_name: str) -> Path:
+    return mountpoint / ".zfs" / "snapshot" / snapshot_name
+
+
+def _zfs_diff_paths(dataset: str, prev: str, curr: str, log: logging.Logger) -> set[str]:
+    code, out, err = _run_cmd(["zfs", "diff", "-H", f"{dataset}@{prev}", f"{dataset}@{curr}"], log, timeout=120)
+    if code != 0:
+        log.error("zfs diff failed: %s", err.strip())
+        return set()
+    paths: set[str] = set()
+    for line in out.splitlines():
+        # Format: <change>\t<path>
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        path = parts[-1].strip()
+        if not path:
+            continue
+        # Convert to dataset-rooted path
+        # zfs diff typically prints like /mountpoint/relpath; but we need relative to dataset root.
+        # We'll strip the mountpoint prefix if present.
+        paths.add(_strip_mountpoint(dataset, path, log))
+    return paths
+
+
+def _strip_mountpoint(dataset: str, full_path: str, log: logging.Logger) -> str:
+    mp = _get_dataset_mountpoint(dataset, log)
+    if not mp:
+        return full_path
+    if full_path == mp:
+        return "/"
+    if full_path.startswith(mp.rstrip("/") + "/"):
+        return full_path[len(mp) :]
+    return full_path
 
 
