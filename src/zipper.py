@@ -702,14 +702,30 @@ def _process_folder_once(
         log.info("skip unchanged: %s", folder_name)
         return "skipped"
 
-    # Temp paths
+    # Temp paths (ensure same filesystem as target for atomic rename)
     run_tag = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    tmp_run_dir = config.tmp_dir / f"zipper-{run_tag}-{folder_name}"
+    tmp_parent = _choose_temp_parent(config.tmp_dir, target_dir)
+    if tmp_parent != config.tmp_dir:
+        log.info("temp dir moved to target fs: %s", tmp_parent)
+    tmp_run_dir = tmp_parent / f"zipper-{run_tag}-{folder_name}"
     tmp_run_dir.mkdir(parents=True, exist_ok=True)
     tmp_zip = tmp_run_dir / zip_name
     tmp_meta = tmp_run_dir / "metadata.json"
     tmp_md5 = tmp_run_dir / f"{zip_name}.md5"
     tmp_sha256 = tmp_run_dir / f"{zip_name}.sha256"
+
+    # Preflight: free space check on temp parent
+    if not dry_run:
+        try:
+            free_bytes = _get_free_bytes(tmp_parent)
+            bytes_needed = total_bytes + 64 * 1024 * 1024
+            if free_bytes < bytes_needed:
+                raise RuntimeError(
+                    f"insufficient space in {tmp_parent} (free={free_bytes}, need~={bytes_needed})"
+                )
+        except Exception as e:
+            log.error("preflight failed: %s", e)
+            raise
 
     # Create zip
     if dry_run:
@@ -886,6 +902,23 @@ def stat_is_regular(mode: int) -> bool:
     import stat as pystat
 
     return pystat.S_ISREG(mode)
+
+
+def _choose_temp_parent(config_tmp: Path, target_dir: Path) -> Path:
+    try:
+        # Prefer configured tmp if on the same device as target
+        if config_tmp.exists():
+            if config_tmp.stat().st_dev == target_dir.stat().st_dev:
+                return config_tmp
+    except Exception:
+        pass
+    # Fallback to target parent
+    return target_dir
+
+
+def _get_free_bytes(path: Path) -> int:
+    st = os.statvfs(str(path))
+    return int(st.f_bavail) * int(st.f_frsize)
 
 
 def _compute_manifest_hash(source_folder: Path, files: list[Path]) -> str:

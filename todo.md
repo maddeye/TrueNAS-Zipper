@@ -100,7 +100,7 @@ Scope: Hourly cron job scans a source dataset for subfolders named with 4 upperc
   - [ ] Include lock guard in cron example to avoid overlaps
 - [ ] Dry run and self-checks
   - [ ] `--dry-run` simulates actions and prints planned changes
-  - [ ] Preflight checks: free space, tmp/target writability
+  - [x] Preflight checks: free space, tmp/target writability (temp free space)
 - [ ] QA on small test dataset
   - [ ] Create sample source structure and validate outputs
   - [ ] Verify integrity, metadata correctness, and retention
