@@ -299,9 +299,13 @@ def main(argv: list[str]) -> int:
             to_process = folders
 
         log.info("%d folders to process", len(to_process))
+        completed = 0
+        skipped = 0
+        failed = 0
+
         if int(config.max_workers) > 1:
             with ThreadPoolExecutor(max_workers=int(config.max_workers)) as executor:
-                futures = [
+                futures = {
                     executor.submit(
                         _process_folder_with_retries,
                         folder,
@@ -311,17 +315,25 @@ def main(argv: list[str]) -> int:
                         run_id,
                         host,
                         log,
-                    )
+                    ): folder
                     for folder in to_process
-                ]
+                }
                 for fut in as_completed(futures):
+                    folder = futures[fut]
                     try:
-                        fut.result()
+                        result = fut.result()
+                        if result is True:
+                            completed += 1
+                        elif result == "skipped":
+                            skipped += 1
+                        else:
+                            failed += 1
                     except Exception as e:
-                        log.error("concurrency worker error: %s", e)
+                        log.error("concurrency worker error for %s: %s", folder.name, e)
+                        failed += 1
         else:
             for folder in to_process:
-                success = _process_folder_with_retries(
+                result = _process_folder_with_retries(
                     source_folder=folder,
                     snapshot_name=snapshot_name if zfs_available else None,
                     config=config,
@@ -330,9 +342,29 @@ def main(argv: list[str]) -> int:
                     host=host,
                     log=log,
                 )
-                if not success:
-                    # Continue to next folder after notification
-                    continue
+                if result is True:
+                    completed += 1
+                elif result == "skipped":
+                    skipped += 1
+                else:
+                    failed += 1
+
+        if config.gotify.notify_success:
+            summary = (
+                f"Backup run complete on {host}\n"
+                f"Run: {run_id}\n"
+                f"Folders: total={len(to_process)}, ok={completed}, skipped={skipped}, failed={failed}\n"
+                f"Source: {config.source_path}\n"
+                f"Target: {config.target_path}\n"
+                f"Snapshot: {snapshot_name or 'none'}"
+            )
+            _send_gotify(
+                gotify=config.gotify,
+                title="Zipper job: run summary",
+                message=summary,
+                priority=max(1, int(config.gotify.priority) - 1),
+                log=log,
+            )
 
         if zfs_available and snapshot_name is not None:
             _cleanup_old_snapshots(dataset, config.snapshot_prefix, int(config.snapshot_retention), args.dry_run, log)
@@ -563,7 +595,9 @@ def _process_folder_with_retries(
     last_err: Exception | None = None
     for attempt in range(1, int(config.retries) + 1):
         try:
-            _process_folder_once(source_folder, snapshot_name, config, dry_run, log)
+            outcome = _process_folder_once(source_folder, snapshot_name, config, dry_run, log)
+            if outcome == "skipped":
+                return "skipped"  # type: ignore[return-value]
             if config.gotify.notify_success:
                 _send_gotify(
                     gotify=config.gotify,
@@ -621,7 +655,7 @@ def _process_folder_once(
     config: AppConfig,
     dry_run: bool,
     log: logging.Logger,
-) -> None:
+) -> str:
     folder_name = source_folder.name
     assert re.fullmatch(r"^[A-Z0-9]{4}$", folder_name), "invalid folder name"
 
@@ -657,7 +691,7 @@ def _process_folder_once(
     prev_state = _read_state_file(state_path, log)
     if prev_state and prev_state.get("last_manifest_sha256") == manifest_hash:
         log.info("skip unchanged: %s", folder_name)
-        return
+        return "skipped"
 
     # Temp paths
     run_tag = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -796,6 +830,7 @@ def _process_folder_once(
                 pass
 
     log.info("done: %s -> %s", folder_name, target_dir)
+    return "ok"
 
     # Write/update state atomically
     if not dry_run:
