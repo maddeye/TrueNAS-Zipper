@@ -683,9 +683,6 @@ def stat_is_regular(mode: int) -> bool:
     import stat as pystat
 
     return pystat.S_ISREG(mode)
-    except Exception as e:
-        log.error("gotify error: %s", e)
-        return False
 
 
 if __name__ == "__main__":
