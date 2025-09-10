@@ -230,7 +230,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     try:
-        run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S") + f"-{os.getpid()}"
+        run_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + f"-{os.getpid()}"
         host = socket.gethostname()
         _log_with_ids(log, run_id, None).info("startup: dry_run=%s workers=%s", args.dry_run, config.max_workers)
 
@@ -251,6 +251,7 @@ def main(argv: list[str]) -> int:
         snapshot_name = None
         prev_snapshot = None
         changed_paths: set[str] = set()
+        live_source_root: Path | None = None
 
         if zfs_available:
             dataset = _find_dataset_for_path(config.source_path, log)
@@ -270,6 +271,12 @@ def main(argv: list[str]) -> int:
             snapshot_path = _snapshot_path(Path(mountpoint), snapshot_name)
             _log_with_ids(log, run_id, None).info("snapshot ready: %s at %s", snapshot_name, snapshot_path)
 
+            # Derive the subpath inside the dataset corresponding to config.source_path
+            try:
+                rel_inside_dataset = os.path.relpath(str(config.source_path), str(mountpoint))
+            except Exception:
+                rel_inside_dataset = "."
+
             prev_snapshot = _previous_snapshot(dataset, config.snapshot_prefix, snapshot_name, log)
             if prev_snapshot:
                 _log_with_ids(log, run_id, None).info("previous snapshot: %s", prev_snapshot)
@@ -280,10 +287,12 @@ def main(argv: list[str]) -> int:
                 changed_paths = _zfs_diff_paths(dataset, prev_snapshot, snapshot_name, log)
                 _log_with_ids(log, run_id, None).info("zfs diff reports %d changed paths", len(changed_paths))
 
-            source_root = Path(snapshot_path)
+            source_root = Path(snapshot_path) / rel_inside_dataset
+            live_source_root = Path(mountpoint) / rel_inside_dataset
         else:
             _log_with_ids(log, run_id, None).info("zfs not found; planning without snapshot")
             source_root = config.source_path
+            live_source_root = config.source_path
 
         valid_folder_pattern = re.compile(r"^[A-Z0-9]{4}$")
         if not source_root.is_dir():
@@ -334,6 +343,7 @@ def main(argv: list[str]) -> int:
                         _process_folder_with_retries,
                         folder,
                         snapshot_name if zfs_available else None,
+                        live_source_root,
                         config,
                         args.dry_run,
                         run_id,
@@ -360,6 +370,7 @@ def main(argv: list[str]) -> int:
                 result = _process_folder_with_retries(
                     source_folder=folder,
                     snapshot_name=snapshot_name if zfs_available else None,
+                    live_source_root=live_source_root,
                     config=config,
                     dry_run=args.dry_run,
                     run_id=run_id,
@@ -610,6 +621,7 @@ def _send_gotify(
 def _process_folder_with_retries(
     source_folder: Path,
     snapshot_name: str | None,
+    live_source_root: Path | None,
     config: AppConfig,
     dry_run: bool,
     run_id: str,
@@ -619,7 +631,7 @@ def _process_folder_with_retries(
     last_err: Exception | None = None
     for attempt in range(1, int(config.retries) + 1):
         try:
-            outcome = _process_folder_once(source_folder, snapshot_name, config, dry_run, run_id, log)
+            outcome = _process_folder_once(source_folder, snapshot_name, live_source_root, config, dry_run, run_id, log)
             if outcome == "skipped":
                 return "skipped"  # type: ignore[return-value]
             if config.gotify.notify_success:
@@ -676,6 +688,7 @@ def _process_folder_with_retries(
 def _process_folder_once(
     source_folder: Path,
     snapshot_name: str | None,
+    live_source_root: Path | None,
     config: AppConfig,
     dry_run: bool,
     run_id: str,
@@ -719,7 +732,7 @@ def _process_folder_once(
         return "skipped"
 
     # Temp paths (ensure same filesystem as target for atomic rename)
-    run_tag = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    run_tag = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     tmp_parent = _choose_temp_parent(config.tmp_dir, target_dir)
     if tmp_parent != config.tmp_dir:
         _log_with_ids(log, run_id, folder_name).info("temp dir moved to target fs: %s", tmp_parent)
@@ -872,9 +885,11 @@ def _process_folder_once(
 
     _log_with_ids(log, run_id, folder_name).info("done: %s -> %s", folder_name, target_dir)
     # Optionally delete source if everything succeeded and configured
-    if not dry_run and config.delete_source_after_success:
+    if not dry_run and config.delete_source_after_success and live_source_root is not None:
         try:
-            _delete_source_folder(source_folder, log, run_id)
+            # Map snapshot folder to live source folder path
+            live_folder = live_source_root / folder_name
+            _delete_source_folder(live_folder, log, run_id)
         except Exception as e:
             _log_with_ids(log, run_id, folder_name).error("failed to delete source %s: %s", source_folder, e)
             # Do not treat as job failure
