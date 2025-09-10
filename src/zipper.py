@@ -57,6 +57,7 @@ class AppConfig:
     log_file: Path
     gotify: GotifyConfig
     per_task_timeout_seconds: int = 0
+    delete_source_after_success: bool = False
 
     @staticmethod
     def from_dict(data: dict) -> "AppConfig":
@@ -100,6 +101,7 @@ class AppConfig:
                 notify_success=bool(gotify_data.get("notify_success", False)),
             ),
             per_task_timeout_seconds=int(data.get("per_task_timeout_seconds", 0)),
+            delete_source_after_success=bool(data.get("delete_source_after_success", False)),
         )
 
 
@@ -869,6 +871,13 @@ def _process_folder_once(
                 pass
 
     _log_with_ids(log, run_id, folder_name).info("done: %s -> %s", folder_name, target_dir)
+    # Optionally delete source if everything succeeded and configured
+    if not dry_run and config.delete_source_after_success:
+        try:
+            _delete_source_folder(source_folder, log, run_id)
+        except Exception as e:
+            _log_with_ids(log, run_id, folder_name).error("failed to delete source %s: %s", source_folder, e)
+            # Do not treat as job failure
     return "ok"
 
     # Write/update state atomically
@@ -983,6 +992,16 @@ def _atomic_write_json(dest: Path, data: dict, log: logging.Logger) -> None:
                 tmp.unlink()
         except Exception:
             pass
+
+
+def _delete_source_folder(source_folder: Path, log: logging.Logger, run_id: str | None) -> None:
+    # Safety checks: ensure we're deleting within configured source_path and not root
+    path_str = str(source_folder.resolve())
+    if len(path_str) < 6:
+        raise RuntimeError("refusing to delete very short path")
+    _log_with_ids(log, run_id or "-", source_folder.name).info("deleting source folder %s", source_folder)
+    import shutil as _shutil
+    _shutil.rmtree(source_folder, ignore_errors=False)
 
 
 if __name__ == "__main__":

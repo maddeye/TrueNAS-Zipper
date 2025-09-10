@@ -5,6 +5,7 @@
   "snapshot_retention": 10,
   "max_workers": 1,
   "per_task_timeout_seconds": 0,
+  "delete_source_after_success": false,
   "retries": 3,
   "nice": 10,
   "umask": "027",

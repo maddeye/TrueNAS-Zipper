@@ -18,6 +18,7 @@ See `config.json.example` for all options. Key fields:
 - `snapshot_retention`: keep last N snapshots created by the tool
 - `max_workers`: default 1; raise carefully
 - `per_task_timeout_seconds`: optional timeout per folder job (0 = no timeout)
+- `delete_source_after_success`: if true, deletes the source folder after a successful archive publish and verification
 - `retries`: default 3
 - `gotify`: `url`, `token`, `priority`, `notify_success`
 
